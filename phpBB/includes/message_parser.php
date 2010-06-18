@@ -21,6 +21,12 @@ if (!class_exists('bbcode'))
 	include($phpbb_root_path . 'includes/bbcode.' . $phpEx);
 }
 
+if (!class_exists('phpbb_bbcode_parser'))
+{
+	include($phpbb_root_path . 'includes/bbcode/bbcode_parser_base.' . $phpEx);
+	include($phpbb_root_path . 'includes/bbcode/bbcode_parser.' . $phpEx);
+}
+
 /**
 * BBCODE FIRSTPASS
 * BBCODE first pass class (functions for parsing messages for db storage)
@@ -1045,6 +1051,8 @@ class parse_message extends bbcode_firstpass
 
 	var $mode;
 
+	var $bbcode_parser;
+
 	/**
 	* Init - give message here or manually
 	*/
@@ -1053,6 +1061,7 @@ class parse_message extends bbcode_firstpass
 		// Init BBCode UID
 		$this->bbcode_uid = substr(base_convert(unique_id(), 16, 36), 0, BBCODE_UID_LEN);
 		$this->message = $message;
+		$this->bbcode_parser = new phpbb_bbcode_parser();
 	}
 
 	/**
@@ -1096,7 +1105,7 @@ class parse_message extends bbcode_firstpass
 		$this->message = preg_replace($match, $replace, trim($this->message));
 
 		// Store message length...
-		$message_length = ($mode == 'post') ? utf8_strlen($this->message) : utf8_strlen(preg_replace('#\[\/?[a-z\*\+\-]+(=[\S]+)?\]#ius', ' ', $this->message));
+		$message_length = ($mode == 'post') ? utf8_strlen($this->message) : utf8_strlen(preg_replace('~\[(/?)(\*|[a-z][a-z0-9]*)(?:=(\'[^\']*\'|"[^"]*"|[^ \]]*))?((?: [a-z]+(?:\s?=\s?(?:\'[^\']*\'|"[^"]*"|[^ \]]*))?)*)\]~i', ' ', $this->message));
 
 		// Maximum message length check. 0 disables this check completely.
 		if ((int) $config['max_' . $mode . '_chars'] > 0 && $message_length > (int) $config['max_' . $mode . '_chars'])
@@ -1115,58 +1124,40 @@ class parse_message extends bbcode_firstpass
 			}
 		}
 
+		$this->bbcode_parser->set_flags(
+			($allow_bbcode ? phpbb_bbcode_parser::PARSE_BBCODE : 0) | 
+			($allow_magic_url ? phpbb_bbcode_parser::PARSE_URLS : 0) | 
+			($allow_smilies ? phpbb_bbcode_parser::PARSE_SMILIES : 0)
+		);
+
 		// Prepare BBcode (just prepares some tags for better parsing)
 		if ($allow_bbcode && strpos($this->message, '[') !== false)
 		{
-			$this->bbcode_init();
 			$disallow = array('img', 'flash', 'quote', 'url');
 			foreach ($disallow as $bool)
 			{
 				if (!${'allow_' . $bool . '_bbcode'})
 				{
-					$this->bbcodes[$bool]['disabled'] = true;
+					$this->bbcode_parser->disable($bool);
 				}
 			}
-
-			$this->prepare_bbcodes();
 		}
 
-		// Parse smilies
-		if ($allow_smilies)
+		$this->message = $this->bbcode_parser->first_pass($this->message);
+
+		$disable_present = $this->bbcode_parser->disable_present();
+		foreach ($disable_present as $bbcode_name)
 		{
-			$this->smilies($config['max_' . $mode . '_smilies']);
+			$this->warn_msg[] = sprintf($user->lang['UNAUTHORISED_BBCODE'] , '[' . $bbcode_name . ']');
 		}
 
-		$num_urls = 0;
-
-		// Parse BBCode
-		if ($allow_bbcode && strpos($this->message, '[') !== false)
+		if ($config['max_' . $mode . '_smilies'] && $this->bbcode_parser->num_smilies() > $config['max_' . $mode . '_smilies'])
 		{
-			$this->parse_bbcode();
-			$num_urls += $this->parsed_items['url'];
-		}
-
-		// Parse URL's
-		if ($allow_magic_url)
-		{
-			$this->magic_url(generate_board_url());
-
-			if ($config['max_' . $mode . '_urls'])
-			{
-				$num_urls += preg_match_all('#\<!-- ([lmwe]) --\>.*?\<!-- \1 --\>#', $this->message, $matches);
-			}
-		}
-
-		// Check for "empty" message. We do not check here for maximum length, because bbcode, smilies, etc. can add to the length.
-		// The maximum length check happened before any parsings.
-		if ($mode === 'post' && utf8_clean_string($this->message) === '')
-		{
-			$this->warn_msg[] = $user->lang['TOO_FEW_CHARS'];
+			$this->warn_msg[] = sprintf($user->lang['TOO_MANY_SMILIES'], $max_smilies);
 			return (!$update_this_message) ? $return_message : $this->warn_msg;
 		}
 
-		// Check number of links
-		if ($config['max_' . $mode . '_urls'] && $num_urls > $config['max_' . $mode . '_urls'])
+		if ($config['max_' . $mode . '_urls'] && $this->bbcode_parser->num_urls() > $config['max_' . $mode . '_urls'])
 		{
 			$this->warn_msg[] = sprintf($user->lang['TOO_MANY_URLS'], $config['max_' . $mode . '_urls']);
 			return (!$update_this_message) ? $return_message : $this->warn_msg;
@@ -1201,17 +1192,15 @@ class parse_message extends bbcode_firstpass
 			$this->parse($allow_bbcode, $allow_magic_url, $allow_smilies, $this->allow_img_bbcode, $this->allow_flash_bbcode, $this->allow_quote_bbcode, $this->allow_url_bbcode, true);
 		}
 
+		// Parse BBcode
+		if ($allow_bbcode && !empty($this->message))
+		{
+			// We are giving those parameters to be able to use the bbcode class on its own
+			$this->message = $this->bbcode_parser->second_pass($this->message);
+		}
+
 		// Replace naughty words such as farty pants
 		$this->message = censor_text($this->message);
-
-		// Parse BBcode
-		if ($allow_bbcode)
-		{
-			$this->bbcode_cache_init();
-
-			// We are giving those parameters to be able to use the bbcode class on its own
-			$this->bbcode_second_pass($this->message, $this->bbcode_uid);
-		}
 
 		$this->message = bbcode_nl2br($this->message);
 		$this->message = smiley_text($this->message, !$allow_smilies);
@@ -1239,7 +1228,10 @@ class parse_message extends bbcode_firstpass
 			$return_message = &$this->message;
 		}
 
-		($custom_bbcode_uid) ? decode_message($this->message, $custom_bbcode_uid) : decode_message($this->message, $this->bbcode_uid);
+		if (!empty($this->message))
+		{
+			$this->message = $this->bbcode_parser->first_pass_decompile($this->message);
+		}
 
 		if (!$update_this_message)
 		{
