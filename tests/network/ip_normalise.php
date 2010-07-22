@@ -40,6 +40,10 @@ class phpbb_network_ip_normalise_test extends phpbb_test_case
 			array('::ffff:192.168.0.1',			'192.168.0.1'),
 			array('0000::0000:ffff:c000:0280',	'192.0.2.128'),
 
+			// IPv6 addresses with the last 32-bit written in dotted-quad notation
+			// should be converted to hex-only IPv6 addresses.
+			array('2001:db8::192.0.2.128', '2001:db8::c000:280'),
+
 			// Any string not passing the IPv4 or IPv6 regular expression
 			// is supposed to result in false being returned.
 			// Valid and invalid IP addresses are tested in 
