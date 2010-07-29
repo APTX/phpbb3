@@ -3503,7 +3503,56 @@ function phpbb_ip_normalise($address)
 */
 function phpbb_inet_ntop($in_addr)
 {
-	return inet_ntop($in_addr);
+	$ip = bin2hex($ip);
+	switch (strlen($ip))
+	{
+		case 8:
+			return implode('.', array_map('hexdec', str_split($ip, 2)));
+
+		case 32:
+			if (substr($ip, 0, 24) === '00000000000000000000ffff')
+			{
+				return phpbb_inet_ntop(pack('H*', substr($ip, 24)));
+			}
+
+			$parts = str_split($ip, 4);
+			$parts = preg_replace('/^0+(?!$)/', '', $parts);
+			$ret = implode(':', $parts);
+
+			$matches = array();
+			preg_match_all('/(?<=:|^)(?::?0){2,}/', $ret, $matches, PREG_OFFSET_CAPTURE);
+			$matches = $matches[0];
+
+			if (!sizeof($matches))
+				return $ret;
+
+			$longest_match = '';
+			$longest_match_offset = 0;
+			foreach ($matches as $match)
+			{
+				if (strlen($match[0]) > strlen($longest_match))
+				{
+					$longest_match = $match[0];
+					$longest_match_offset = $match[1];
+				}
+			}
+			
+			$ret = substr_replace($ret, '', $longest_match_offset, strlen($longest_match));
+			
+			if ($longest_match_offset == strlen($ret))
+			{
+				$ret .= ':';
+			}
+			
+			if ($longest_match_offset == 0)
+			{
+				$ret = ':' . $ret;
+			}
+			return $ret;
+
+		default:
+			return false;
+	}
 }
 
 /**
@@ -3518,7 +3567,62 @@ function phpbb_inet_ntop($in_addr)
 */
 function phpbb_inet_pton($address)
 {
-	return inet_pton($address);
+	$ret = '';
+	if (preg_match(get_preg_expression('ipv4'), $ip))
+	{
+		foreach (explode('.', $ip) as $part)
+		{
+			$ret .= ($part <= 0xF ? '0' : '') . dechex($part);
+		}
+		return pack('H*', $ret);
+	}
+
+	if (preg_match(get_preg_expression('ipv6'), $ip))
+	{
+		$parts = explode(':', $ip);
+		$missing_parts = 8 - sizeof($parts) + 1;
+		if (substr($ip, 0, 2) === '::')
+		{
+			++$missing_parts;
+		}
+		if (substr($ip, -2) === '::')
+		{
+			++$missing_parts;
+		}
+		
+		$embedded_ipv4 = false;
+
+		$last_part = end($parts);
+		
+		if (preg_match(get_preg_expression('ipv4'), $last_part))
+		{
+			$parts[sizeof($parts) - 1] = '';
+			$last_part = phpbb_inet_pton($last_part);
+			$embedded_ipv4 = true;
+			--$missing_parts;
+		}
+
+		foreach ($parts as $i => $part)
+		{
+			if (strlen($part))
+			{
+				$ret .= str_pad($part, 4, '0', STR_PAD_LEFT);
+			}
+			else if ($i && $i < sizeof($parts) - 1)
+			{
+				$ret .= str_repeat('0000', $missing_parts);
+			}
+		}
+		
+		$ret = pack('H*', $ret);
+		
+		if ($embedded_ipv4)
+		{
+			$ret .= $last_part;
+		}
+		return $ret;
+	}
+	return false;
 }
 
 /**
