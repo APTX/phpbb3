@@ -3503,19 +3503,19 @@ function phpbb_ip_normalise($address)
 */
 function phpbb_inet_ntop($in_addr)
 {
-	$ip = bin2hex($ip);
-	switch (strlen($ip))
+	$in_addr = bin2hex($in_addr);
+	switch (strlen($in_addr))
 	{
 		case 8:
-			return implode('.', array_map('hexdec', str_split($ip, 2)));
+			return implode('.', array_map('hexdec', str_split($in_addr, 2)));
 
 		case 32:
-			if (substr($ip, 0, 24) === '00000000000000000000ffff')
+			if (substr($in_addr, 0, 24) === '00000000000000000000ffff')
 			{
-				return phpbb_inet_ntop(pack('H*', substr($ip, 24)));
+				return phpbb_inet_ntop(pack('H*', substr($in_addr, 24)));
 			}
 
-			$parts = str_split($ip, 4);
+			$parts = str_split($in_addr, 4);
 			$parts = preg_replace('/^0+(?!$)/', '', $parts);
 			$ret = implode(':', $parts);
 
@@ -3568,24 +3568,24 @@ function phpbb_inet_ntop($in_addr)
 function phpbb_inet_pton($address)
 {
 	$ret = '';
-	if (preg_match(get_preg_expression('ipv4'), $ip))
+	if (preg_match(get_preg_expression('ipv4'), $address))
 	{
-		foreach (explode('.', $ip) as $part)
+		foreach (explode('.', $address) as $part)
 		{
 			$ret .= ($part <= 0xF ? '0' : '') . dechex($part);
 		}
 		return pack('H*', $ret);
 	}
 
-	if (preg_match(get_preg_expression('ipv6'), $ip))
+	if (preg_match(get_preg_expression('ipv6'), $address))
 	{
-		$parts = explode(':', $ip);
+		$parts = explode(':', $address);
 		$missing_parts = 8 - sizeof($parts) + 1;
-		if (substr($ip, 0, 2) === '::')
+		if (substr($address, 0, 2) === '::')
 		{
 			++$missing_parts;
 		}
-		if (substr($ip, -2) === '::')
+		if (substr($address, -2) === '::')
 		{
 			++$missing_parts;
 		}
